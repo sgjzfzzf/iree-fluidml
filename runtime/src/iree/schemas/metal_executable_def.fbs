@@ -17,14 +17,58 @@ struct ThreadgroupSize {
   z:uint32;
 }
 
+// Describes the behavior of each binding.
+// Roughly maps to iree_hal_descriptor_flags_t but is not required to match
+// exactly; if there's additional binding information we want to pass through
+// to Metal we can encode that here.
+enum BindingBits:uint64 (bit_flags) {
+  // IREE_HAL_DESCRIPTOR_FLAG_READ_ONLY
+  READ_ONLY = 0,  // 1u << 0
+  // IREE_HAL_DESCRIPTOR_FLAG_INDIRECT
+  INDIRECT = 1,  // 1u << 1
+}
+
+// Information about an exported function on the executable.
+table ExportDef {
+  // Ordinal of the shader library containing the entry point in the executable
+  // libraries list.
+  library_ordinal:uint32;
+
+  // String name of the entry point function in the shader library.
+  entry_point:string;
+
+  // Threadgroup size for the entry-point because Metal needs it when making API
+  // calls (instead of it being baked into the library binaries).
+  // This could be dropped if we used executable constant blocks: we could have
+  // a special constant with a well-known key.
+  threadgroup_size:ThreadgroupSize;
+
+  // Total number of 32-bit push constants used by the export.
+  constant_count:uint32;
+
+  // Binding count and flags for each binding.
+  binding_flags:[BindingBits];
+}
+
+// A shader or library containing one or more exported functions.
+table LibraryDef {
+  // MSL shader source string. Optional if the library is provided but may be
+  // included for debugging.
+  source:string;
+  // MTLLibrary (.metallib) compiled binary. Optional if the source is provided.
+  library:string;
+}
+
 // A Metal shader library and runtime pipeline state description.
 // This information is used to create MTLLibrary, MTLFunction and pipeline
 // state objects.
 table ExecutableDef {
+  // TODO(#18154): remove all fields besides shader_libraries and exports.
   // A map of entry point ordinals to string names as used in the shader
   // library.
   entry_points:[string];
 
+  // TODO(#18154): remove all fields besides shader_libraries and exports.
   // Threadgroup sizes for each entry point.
   //
   // We need this because workgroup size is directly baked inside SPIR-V code,
@@ -34,14 +78,21 @@ table ExecutableDef {
   // TODO(antiagainst): support SPIR-V specialization constant.
   threadgroup_sizes:[ThreadgroupSize];
 
+  // TODO(#18154): remove all fields besides shader_libraries and exports.
   // Shader content can be provided as either a serialized library or in the
   // form of source code strings.
-
   // Serialized Metal shader library.
   // TODO(#14047): enable linking and consolidate into one library.
   shader_libraries:[string];
   // Original Metal shader source code.
   shader_sources:[string];
+
+  // A list of all Metal shader libraries used by the executable.
+  // Exports index into this list and multiple exports may use the same library.
+  libraries:[LibraryDef];
+
+  // Exported functions in canonical executable entry point order.
+  exports:[ExportDef];
 }
 
 root_type ExecutableDef;

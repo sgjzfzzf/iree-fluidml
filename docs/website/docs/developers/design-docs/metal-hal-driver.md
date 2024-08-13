@@ -195,7 +195,7 @@ IREE [`iree_hal_buffer_t`][hal-buffer] maps Metal `MTLBuffer`. See
 IREE [`iree_hal_executable_t`][hal-executable] represents a GPU program archive with
 a driver-defined format. It maps naturally to Metal [`MTLLibrary`][mtl-library].
 An entry point in a `MTLLibrary` is a [`MTLFunction`][mtl-function]. We define
-[`iree_hal_metal_kernel_params_t`][metal-kernel-library] to wrap around a
+[`iree_hal_metal_executable_t`][metal-kernel-library] to wrap around a
 `MTLLibrary`, its `MTLFunction`s, and also `MTLComputePipelineState` objects
 constructed from `MTLFunction`s.
 
