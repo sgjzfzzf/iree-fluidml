@@ -579,8 +579,12 @@ public:
     auto sourceFilesRef = createSourceFilesVec(
         serOptions.debugLevel, variantOp.getSourcesAttr(), builder);
 
+    // Generate optional per-export debug information.
+    // May be empty if no debug information was requested.
+    auto exportDebugInfo =
+        createExportDefs(serOptions.debugLevel, exportOps, builder);
+
     SmallVector<StringRef> entryPointNames;
-    SmallVector<iree_hal_debug_FileLineLocDef_ref_t> sourceLocationRefs;
     entryPointNames.resize(exportOps.size());
     for (auto exportOp : exportOps) {
       auto ordinalAttr = exportOp.getOrdinalAttr();
@@ -590,48 +594,6 @@ public:
       }
       int64_t ordinal = ordinalAttr.getInt();
       entryPointNames[ordinal] = exportOp.getName();
-
-      // Optional source location information for debugging/profiling.
-      if (serOptions.debugLevel >= 1) {
-        if (auto loc = findFirstFileLoc(exportOp.getLoc())) {
-          // We only ever resize to the maximum -- so all previous data will
-          // be kept as-is.
-          sourceLocationRefs.resize(exportOps.size());
-          auto filenameRef = builder.createString(loc->getFilename());
-          sourceLocationRefs[ordinal] = iree_hal_debug_FileLineLocDef_create(
-              builder, filenameRef, loc->getLine());
-        }
-      }
-    }
-
-    // Optional compilation stage source files.
-    SmallVector<iree_hal_debug_StageLocationsDef_ref_t> stageLocationsRefs;
-    if (serOptions.debugLevel >= 3) {
-      for (auto exportOp : exportOps) {
-        SmallVector<iree_hal_debug_StageLocationDef_ref_t> stageLocationRefs;
-        if (auto locsAttr = exportOp.getSourceLocsAttr()) {
-          for (auto locAttr : locsAttr.getValue()) {
-            if (auto loc =
-                    findFirstFileLoc(cast<LocationAttr>(locAttr.getValue()))) {
-              auto stageNameRef = builder.createString(locAttr.getName());
-              auto filenameRef = builder.createString(loc->getFilename());
-              stageLocationRefs.push_back(
-                  iree_hal_debug_StageLocationDef_create(
-                      builder, stageNameRef,
-                      iree_hal_debug_FileLineLocDef_create(builder, filenameRef,
-                                                           loc->getLine())));
-            }
-          }
-        }
-        if (!stageLocationRefs.empty()) {
-          // We only ever resize to the maximum -- so all previous data will
-          // be kept as-is.
-          stageLocationsRefs.resize(exportOps.size());
-          int64_t ordinal = exportOp.getOrdinalAttr().getInt();
-          stageLocationsRefs[ordinal] = iree_hal_debug_StageLocationsDef_create(
-              builder, builder.createOffsetVecDestructive(stageLocationRefs));
-        }
-      }
     }
 
     auto hsacoRef = flatbuffers_string_create(builder, targetHSACO.c_str(),
@@ -653,18 +615,6 @@ public:
     iree_hal_hip_ExecutableDef_shared_memory_sizes_add(
         builder, workgroupLocalMemoriesRef);
     iree_hal_hip_ExecutableDef_hsaco_image_add(builder, hsacoRef);
-    if (!sourceLocationRefs.empty()) {
-      auto sourceLocationsRef =
-          builder.createOffsetVecDestructive(sourceLocationRefs);
-      iree_hal_hip_ExecutableDef_source_locations_add(builder,
-                                                      sourceLocationsRef);
-    }
-    if (!stageLocationsRefs.empty()) {
-      auto stageLocationsRef =
-          builder.createOffsetVecDestructive(stageLocationsRefs);
-      iree_hal_hip_ExecutableDef_stage_locations_add(builder,
-                                                     stageLocationsRef);
-    }
     iree_hal_hip_ExecutableDef_source_files_add(builder, sourceFilesRef);
     iree_hal_hip_ExecutableDef_end_as_root(builder);
 

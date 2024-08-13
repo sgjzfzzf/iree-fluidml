@@ -35,15 +35,6 @@ table ExecutableDef {
   // HSACO string of the module.
   hsaco_image:string;
 
-  // A map of entry point ordinals to source locations.
-  // This information is optional and may be used by debuggers and profilers to
-  // associate executable entry points with the source that generated them.
-  source_locations:[iree.hal.debug.FileLineLocDef];
-
-  // Table of source locations per entry point keyed by a string compilation
-  // stage name. Sorted ascending by name.
-  stage_locations:[iree.hal.debug.StageLocationsDef];
-
   // Embedded source files sorted ascending by path.
   source_files:[iree.hal.debug.SourceFileDef];
 }

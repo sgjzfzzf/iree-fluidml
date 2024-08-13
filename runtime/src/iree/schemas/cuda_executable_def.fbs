@@ -35,11 +35,6 @@ table ExecutableDef {
   // PTX string of the module.
   ptx_image:string;
 
-  // A map of entry point ordinals to source locations.
-  // This information is optional and may be used by debuggers and profilers to
-  // associate executable entry points with the source that generated them.
-  source_locations:[iree.hal.debug.FileLineLocDef];
-
   // Embedded source files sorted ascending by path.
   source_files:[iree.hal.debug.SourceFileDef];
 }

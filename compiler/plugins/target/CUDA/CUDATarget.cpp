@@ -524,7 +524,6 @@ public:
 
     SmallVector<std::string> entryPointNames;
     std::string ptxImage;
-    SmallVector<iree_hal_debug_FileLineLocDef_ref_t> sourceLocationRefs;
     if (variantOp.isExternal()) {
       if (!variantOp.getObjects().has_value()) {
         return variantOp.emitOpError()
@@ -590,15 +589,6 @@ public:
         setMetadataValueI32("maxntidx", workgroupSize[0]);
         setMetadataValueI32("maxntidy", workgroupSize[1]);
         setMetadataValueI32("maxntidz", workgroupSize[2]);
-
-        // Optional source location information for debugging/profiling.
-        if (serOptions.debugLevel >= 1) {
-          if (auto loc = findFirstFileLoc(exportOp.getLoc())) {
-            auto filenameRef = builder.createString(loc->getFilename());
-            sourceLocationRefs.push_back(iree_hal_debug_FileLineLocDef_create(
-                builder, filenameRef, loc->getLine()));
-          }
-        }
       }
 
       std::unique_ptr<llvm::TargetMachine> targetMachine;
@@ -685,12 +675,6 @@ public:
     iree_hal_cuda_ExecutableDef_shared_memory_size_add(
         builder, workgroupLocalMemoriesRef);
     iree_hal_cuda_ExecutableDef_ptx_image_add(builder, gpuImageRef);
-    if (!sourceLocationRefs.empty()) {
-      auto sourceLocationsRef =
-          builder.createOffsetVecDestructive(sourceLocationRefs);
-      iree_hal_cuda_ExecutableDef_source_locations_add(builder,
-                                                       sourceLocationsRef);
-    }
     iree_hal_cuda_ExecutableDef_source_files_add(builder, sourceFilesRef);
     iree_hal_cuda_ExecutableDef_end_as_root(builder);
 

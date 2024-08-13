@@ -183,6 +183,11 @@ public:
     auto sourceFilesRef = createSourceFilesVec(
         options.debugLevel, variantOp.getSourcesAttr(), builder);
 
+    // Generate optional per-export debug information.
+    // May be empty if no debug information was requested.
+    auto exportDebugInfo =
+        createExportDefs(options.debugLevel, exportOps, builder);
+
     // The list of shader modules.
     SmallVector<iree_hal_spirv_ShaderModuleDef_ref_t> shaderModuleRefs;
 
@@ -192,7 +197,6 @@ public:
     SmallVector<StringRef> entryPointNames;
     SmallVector<uint32_t> subgroupSizes;
     SmallVector<uint32_t> shaderModuleIndices;
-    SmallVector<iree_hal_debug_FileLineLocDef_ref_t> sourceLocationRefs;
     entryPointNames.resize(ordinalCount);
     subgroupSizes.resize(ordinalCount);
     shaderModuleIndices.resize(ordinalCount);
@@ -248,48 +252,6 @@ public:
       } else {
         subgroupSizes[ordinal] = 0;
       }
-
-      // Optional source location information for debugging/profiling.
-      if (options.debugLevel >= 1) {
-        if (auto loc = findFirstFileLoc(spvEntryPoint.getLoc())) {
-          // We only ever resize to the maximum -- so all previous data will be
-          // kept as-is.
-          sourceLocationRefs.resize(ordinalCount);
-          auto filenameRef = builder.createString(loc->getFilename());
-          sourceLocationRefs[ordinal] = iree_hal_debug_FileLineLocDef_create(
-              builder, filenameRef, loc->getLine());
-        }
-      }
-    }
-
-    // Optional compilation stage source files.
-    SmallVector<iree_hal_debug_StageLocationsDef_ref_t> stageLocationsRefs;
-    if (options.debugLevel >= 3) {
-      for (auto exportOp : exportOps) {
-        SmallVector<iree_hal_debug_StageLocationDef_ref_t> stageLocationRefs;
-        if (auto locsAttr = exportOp.getSourceLocsAttr()) {
-          for (auto locAttr : locsAttr.getValue()) {
-            if (auto loc =
-                    findFirstFileLoc(cast<LocationAttr>(locAttr.getValue()))) {
-              auto stageNameRef = builder.createString(locAttr.getName());
-              auto filenameRef = builder.createString(loc->getFilename());
-              stageLocationRefs.push_back(
-                  iree_hal_debug_StageLocationDef_create(
-                      builder, stageNameRef,
-                      iree_hal_debug_FileLineLocDef_create(builder, filenameRef,
-                                                           loc->getLine())));
-            }
-          }
-        }
-        if (!stageLocationRefs.empty()) {
-          // We only ever resize to the maximum -- so all previous data will
-          // be kept as-is.
-          stageLocationsRefs.resize(ordinalCount);
-          int64_t ordinal = exportOp.getOrdinalAttr().getInt();
-          stageLocationsRefs[ordinal] = iree_hal_debug_StageLocationsDef_create(
-              builder, builder.createOffsetVecDestructive(stageLocationRefs));
-        }
-      }
     }
 
     // Add top-level executable fields following their order of definition.
@@ -308,18 +270,6 @@ public:
     auto shaderModulesRef =
         builder.createOffsetVecDestructive(shaderModuleRefs);
     iree_hal_spirv_ExecutableDef_shader_modules_add(builder, shaderModulesRef);
-    if (!sourceLocationRefs.empty()) {
-      auto sourceLocationsRef =
-          builder.createOffsetVecDestructive(sourceLocationRefs);
-      iree_hal_spirv_ExecutableDef_source_locations_add(builder,
-                                                        sourceLocationsRef);
-    }
-    if (!stageLocationsRefs.empty()) {
-      auto stageLocationsRef =
-          builder.createOffsetVecDestructive(stageLocationsRefs);
-      iree_hal_spirv_ExecutableDef_stage_locations_add(builder,
-                                                       stageLocationsRef);
-    }
     iree_hal_spirv_ExecutableDef_source_files_add(builder, sourceFilesRef);
 
     iree_hal_spirv_ExecutableDef_end_as_root(builder);

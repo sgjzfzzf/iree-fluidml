@@ -9,6 +9,7 @@
 #include <stddef.h>
 
 #include "iree/base/api.h"
+#include "iree/hal/drivers/metal/pipeline_layout.h"
 #include "iree/hal/utils/executable_debug_info.h"
 
 // flatcc schemas:
@@ -21,11 +22,11 @@
 typedef struct iree_hal_metal_executable_t {
   // Abstract resource used for injecting reference counting and vtable; must be at offset 0.
   iree_hal_resource_t resource;
-
   iree_allocator_t host_allocator;
 
-  iree_host_size_t entry_point_count;
-  iree_hal_metal_kernel_params_t entry_points[];
+  // TODO(#18154): simplify struct per export.
+  iree_host_size_t export_count;
+  iree_hal_metal_kernel_params_t exports[];
 } iree_hal_metal_executable_t;
 
 static const iree_hal_executable_vtable_t iree_hal_metal_executable_vtable;
@@ -248,6 +249,55 @@ iree_status_t iree_hal_metal_executable_create(
 
   iree_hal_metal_ExecutableDef_table_t executable_def =
       iree_hal_metal_ExecutableDef_as_root(executable_params->executable_data.data);
+  iree_hal_metal_LibraryDef_vec_t libraries_vec =
+      iree_hal_metal_ExecutableDef_libraries_get(executable_def);
+  iree_hal_metal_ExportDef_vec_t exports_vec =
+      iree_hal_metal_ExecutableDef_exports_get(executable_def);
+
+  // Calculate the total number of characters across all entry point names. This is only required
+  // when tracing so that we can store copies of the names as the flatbuffer storing the strings
+  // may be released while the executable is still live.
+  iree_host_size_t export_count = iree_hal_metal_ExportDef_vec_len(exports_vec);
+  iree_host_size_t total_entry_point_name_chars = 0;
+  IREE_TRACE({
+    if (exports_vec) {
+      for (size_t i = 0; i < export_count; ++i) {
+        iree_hal_metal_ExportDef_table_t export_def =
+            iree_hal_metal_ExportDef_vec_at(exports_vec, i);
+        flatbuffers_string_t entry_point = iree_hal_metal_ExportDef_entry_point_get(export_def);
+        total_entry_point_name_chars += flatbuffers_string_len(entry_point);
+      }
+    } else {
+      flatbuffers_string_vec_t entry_points_vec =
+          iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
+      export_count = flatbuffers_string_vec_len(entry_points_vec);
+      for (iree_host_size_t i = 0; i < export_count; ++i) {
+        const char* entry_name = flatbuffers_string_vec_at(entry_points_vec, i);
+        total_entry_point_name_chars += flatbuffers_string_len(entry_name);
+      }
+    }
+  });
+
+  // Create the HAL executable with storage for dynamic arrays.
+  iree_host_size_t total_size = export_count * sizeof(executable->exports[0]) +
+                                sizeof(*executable) + total_entry_point_name_chars;
+  IREE_RETURN_AND_END_ZONE_IF_ERROR(
+      z0, iree_allocator_malloc(host_allocator, total_size, (void**)&executable));
+  iree_hal_resource_initialize(&iree_hal_metal_executable_vtable, &executable->resource);
+  executable->host_allocator = host_allocator;
+  executable->export_count = export_count;
+  memset(executable->exports, 0, export_count * sizeof(executable->exports[0]));
+  IREE_TRACE(char* string_table_buffer = (char*)((uint8_t*)executable->libraries +
+                                                 library_count * sizeof(executable->libraries[0])));
+
+  // Publish any embedded source files to the tracing infrastructure.
+  iree_hal_debug_publish_source_files(iree_hal_rocm_ExecutableDef_source_files_get(executable_def));
+
+  // Try to load as Metal library first. Otherwise, compile each MSL source string into a
+  // MTLLibrary and get the MTLFunction for the entry point to build the pipeline state object.
+  // TODO(#14047): Enable async MSL compilation at runtime.
+  MTLCompileOptions* compile_options = [MTLCompileOptions new];  // +1
+  compile_options.languageVersion = MTLLanguageVersion3_0;
 
   flatbuffers_string_vec_t entry_points_vec =
       iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
@@ -257,97 +307,56 @@ iree_status_t iree_hal_metal_executable_create(
       iree_hal_metal_ExecutableDef_shader_libraries_get(executable_def);
   flatbuffers_string_vec_t shader_sources_vec =
       iree_hal_metal_ExecutableDef_shader_sources_get(executable_def);
-  iree_host_size_t entry_point_count = flatbuffers_string_vec_len(entry_points_vec);
+  size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
+  size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
+  for (size_t i = 0, e = iree_max(shader_library_count, shader_source_count); i < e; ++i) {
+    id<MTLLibrary> library = nil;
+    id<MTLFunction> function = nil;
+    id<MTLComputePipelineState> pso = nil;
 
-  // Calculate the total number of characters across all entry point names. This is only required
-  // when tracing so that we can store copies of the names as the flatbuffer storing the strings
-  // may be released while the executable is still live.
-  iree_host_size_t total_entry_point_name_chars = 0;
-  IREE_TRACE({
-    for (iree_host_size_t i = 0; i < entry_point_count; i++) {
-      const char* entry_name = flatbuffers_string_vec_at(entry_points_vec, i);
-      total_entry_point_name_chars += flatbuffers_string_len(entry_name);
+    flatbuffers_string_t source_code = NULL;
+    flatbuffers_string_t entry_point = flatbuffers_string_vec_at(entry_points_vec, i);
+    iree_string_view_t entry_point_view =
+        iree_make_string_view(entry_point, flatbuffers_string_len(entry_point));
+
+    if (shader_library_count != 0) {
+      flatbuffers_string_t source_library = flatbuffers_string_vec_at(shader_libraries_vec, i);
+      status = iree_hal_metal_load_mtllib(
+          iree_make_const_byte_span(source_library, flatbuffers_string_len(source_library)),
+          entry_point_view, device, &library);
+    } else {
+      source_code = flatbuffers_string_vec_at(shader_sources_vec, i);
+      status = iree_hal_metal_compile_msl(
+          iree_make_string_view(source_code, flatbuffers_string_len(source_code)), entry_point_view,
+          device, compile_options, &library);
     }
-  });
+    if (!iree_status_is_ok(status)) break;
 
-  // Create the kernel library.
-  iree_host_size_t total_size = sizeof(*executable) +
-                                entry_point_count * sizeof(executable->entry_points[0]) +
-                                total_entry_point_name_chars;
-  iree_status_t status = iree_allocator_malloc(host_allocator, total_size, (void**)&executable);
-  IREE_TRACE(char* string_table_buffer =
-                 (char*)((char*)executable + sizeof(*executable) +
-                         entry_point_count * sizeof(executable->entry_points[0])));
-  if (iree_status_is_ok(status)) {
-    iree_hal_resource_initialize(&iree_hal_metal_executable_vtable, &executable->resource);
-    executable->host_allocator = host_allocator;
-    executable->entry_point_count = entry_point_count;
+    status = iree_hal_metal_create_pipeline_object(library, entry_point_view, source_code, device,
+                                                   &function, &pso);
+    if (!iree_status_is_ok(status)) break;
 
-    // Publish any embedded source files to the tracing infrastructure.
-    if (iree_status_is_ok(status)) {
-      iree_hal_debug_publish_source_files(
-          iree_hal_metal_ExecutableDef_source_files_get(executable_def));
-    }
+    // Package required parameters for kernel launches for each entry point.
+    iree_hal_metal_kernel_params_t* params = &executable->exports[i];
+    params->library = library;
+    params->function = function;
+    params->pso = pso;
+    params->threadgroup_size[0] = threadgroup_sizes_vec[i].x;
+    params->threadgroup_size[1] = threadgroup_sizes_vec[i].y;
+    params->threadgroup_size[2] = threadgroup_sizes_vec[i].z;
+    params->layout = executable_params->pipeline_layouts[i];
+    iree_hal_pipeline_layout_retain(params->layout);
 
-    size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
-    size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
-
-    // Try to load as Metal library first. Otherwise, compile each MSL source string into a
-    // MTLLibrary and get the MTLFunction for the entry point to build the pipeline state object.
-    // TODO(#14047): Enable async MSL compilation at runtime.
-
-    MTLCompileOptions* compile_options = [MTLCompileOptions new];  // +1
-    compile_options.languageVersion = MTLLanguageVersion3_0;
-
-    for (size_t i = 0, e = iree_max(shader_library_count, shader_source_count); i < e; ++i) {
-      id<MTLLibrary> library = nil;
-      id<MTLFunction> function = nil;
-      id<MTLComputePipelineState> pso = nil;
-
-      flatbuffers_string_t source_code = NULL;
-      flatbuffers_string_t entry_point = flatbuffers_string_vec_at(entry_points_vec, i);
-      iree_string_view_t entry_point_view =
-          iree_make_string_view(entry_point, flatbuffers_string_len(entry_point));
-
-      if (shader_library_count != 0) {
-        flatbuffers_string_t source_library = flatbuffers_string_vec_at(shader_libraries_vec, i);
-        status = iree_hal_metal_load_mtllib(
-            iree_make_const_byte_span(source_library, flatbuffers_string_len(source_library)),
-            entry_point_view, device, &library);
-      } else {
-        source_code = flatbuffers_string_vec_at(shader_sources_vec, i);
-        status = iree_hal_metal_compile_msl(
-            iree_make_string_view(source_code, flatbuffers_string_len(source_code)),
-            entry_point_view, device, compile_options, &library);
-      }
-      if (!iree_status_is_ok(status)) break;
-
-      status = iree_hal_metal_create_pipeline_object(library, entry_point_view, source_code, device,
-                                                     &function, &pso);
-      if (!iree_status_is_ok(status)) break;
-
-      // Package required parameters for kernel launches for each entry point.
-      iree_hal_metal_kernel_params_t* params = &executable->entry_points[i];
-      params->library = library;
-      params->function = function;
-      params->pso = pso;
-      params->threadgroup_size[0] = threadgroup_sizes_vec[i].x;
-      params->threadgroup_size[1] = threadgroup_sizes_vec[i].y;
-      params->threadgroup_size[2] = threadgroup_sizes_vec[i].z;
-      params->layout = executable_params->pipeline_layouts[i];
-      iree_hal_pipeline_layout_retain(params->layout);
-
-      // Stash the entry point name in the string table for use when tracing.
-      IREE_TRACE({
-        iree_host_size_t entry_name_length = flatbuffers_string_len(entry_point);
-        memcpy(string_table_buffer, entry_point, entry_name_length);
-        params->function_name = iree_make_string_view(string_table_buffer, entry_name_length);
-        string_table_buffer += entry_name_length;
-      });
-    }
-
-    [compile_options release];  // -1
+    // Stash the entry point name in the string table for use when tracing.
+    IREE_TRACE({
+      iree_host_size_t entry_name_length = flatbuffers_string_len(entry_point);
+      memcpy(string_table_buffer, entry_point, entry_name_length);
+      params->function_name = iree_make_string_view(string_table_buffer, entry_name_length);
+      string_table_buffer += entry_name_length;
+    });
   }
+
+  [compile_options release];  // -1
 
   if (iree_status_is_ok(status)) {
     *out_executable = (iree_hal_executable_t*)executable;
@@ -363,13 +372,14 @@ static void iree_hal_metal_executable_destroy(iree_hal_executable_t* base_execut
   iree_hal_metal_executable_t* executable = iree_hal_metal_executable_cast(base_executable);
   IREE_TRACE_ZONE_BEGIN(z0);
 
-  for (iree_host_size_t i = 0; i < executable->entry_point_count; ++i) {
-    iree_hal_metal_kernel_params_t* entry_point = &executable->entry_points[i];
+  for (iree_host_size_t i = 0; i < executable->export_count; ++i) {
+    iree_hal_metal_kernel_params_t* entry_point = &executable->exports[i];
     [entry_point->pso release];       // -1
     [entry_point->function release];  // -1
     [entry_point->library release];   // -1
     iree_hal_pipeline_layout_release(entry_point->layout);
   }
+
   iree_allocator_free(executable->host_allocator, executable);
 
   IREE_TRACE_ZONE_END(z0);
@@ -380,11 +390,11 @@ iree_status_t iree_hal_metal_executable_entry_point_kernel_params(
     iree_hal_metal_kernel_params_t* out_params) {
   const iree_hal_metal_executable_t* executable =
       iree_hal_metal_executable_const_cast(base_executable);
-  if (entry_point >= executable->entry_point_count) {
+  if (entry_point >= executable->export_count) {
     return iree_make_status(IREE_STATUS_OUT_OF_RANGE, "invalid entry point ordinal %d",
                             entry_point);
   }
-  memcpy(out_params, &executable->entry_points[entry_point], sizeof(*out_params));
+  memcpy(out_params, &executable->exports[entry_point], sizeof(*out_params));
   return iree_ok_status();
 }
 

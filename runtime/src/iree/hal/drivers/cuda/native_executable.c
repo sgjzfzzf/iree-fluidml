@@ -21,7 +21,7 @@
 #include "iree/schemas/executable_debug_info_reader.h"
 #include "iree/schemas/executable_debug_info_verifier.h"
 
-typedef struct iree_hal_cuda_native_executable_t {
+typedef struct iree_hal_cuda_native_zexecutable_t {
   // Abstract resource used for injecting reference counting and vtable;
   // must be at offset 0.
   iree_hal_resource_t resource;
