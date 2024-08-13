@@ -33,14 +33,20 @@ iree_flatbuffer_c_library(
 )
 
 iree_flatbuffer_c_library(
-    name = "rocm_executable_def_c_fbs",
-    srcs = ["rocm_executable_def.fbs"],
+    name = "executable_debug_info_c_fbs",
+    srcs = ["executable_debug_info.fbs"],
     flatcc_args = FLATCC_ARGS,
 )
 
 iree_flatbuffer_c_library(
     name = "metal_executable_def_c_fbs",
     srcs = ["metal_executable_def.fbs"],
+    flatcc_args = FLATCC_ARGS,
+)
+
+iree_flatbuffer_c_library(
+    name = "rocm_executable_def_c_fbs",
+    srcs = ["rocm_executable_def.fbs"],
     flatcc_args = FLATCC_ARGS,
 )
 
@@ -60,7 +66,10 @@ iree_build_test(
     name = "schema_build_test",
     targets = [
         ":bytecode_module_def_c_fbs",
+        ":cuda_executable_def_c_fbs",
+        ":executable_debug_info_c_fbs",
         ":metal_executable_def_c_fbs",
+        ":rocm_executable_def_c_fbs",
         ":spirv_executable_def_c_fbs",
         ":wgsl_executable_def_c_fbs",
     ],

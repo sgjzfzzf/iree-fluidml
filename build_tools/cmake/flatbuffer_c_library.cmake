@@ -94,6 +94,7 @@ function(flatbuffer_c_library)
       iree-flatcc-cli
           -o "${CMAKE_CURRENT_BINARY_DIR}"
           -I "${IREE_ROOT_DIR}"
+          -I "${IREE_ROOT_DIR}/runtime/src"
           ${_RULE_FLATCC_ARGS}
           "${_RULE_SRCS}"
     WORKING_DIRECTORY
