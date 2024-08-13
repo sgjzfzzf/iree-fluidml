@@ -51,9 +51,9 @@ flatbuffer_c_library(
 
 flatbuffer_c_library(
   NAME
-    metal_executable_def_c_fbs
+    hip_executable_def_c_fbs
   SRCS
-    "metal_executable_def.fbs"
+    "hip_executable_def.fbs"
   FLATCC_ARGS
     "--reader"
     "--builder"
@@ -64,9 +64,9 @@ flatbuffer_c_library(
 
 flatbuffer_c_library(
   NAME
-    rocm_executable_def_c_fbs
+    metal_executable_def_c_fbs
   SRCS
-    "rocm_executable_def.fbs"
+    "metal_executable_def.fbs"
   FLATCC_ARGS
     "--reader"
     "--builder"
