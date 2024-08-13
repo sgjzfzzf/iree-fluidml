@@ -25,6 +25,15 @@ typedef struct iree_hal_metal_kernel_params_t {
   uint32_t threadgroup_size[3];
   // TODO(#18154): remove layout in simplified bindings.
   iree_hal_pipeline_layout_t* layout;
+  // Total number of 32-bit push constants.
+  uint32_t constant_count;
+  // Total number of bindings.
+  uint32_t binding_count;
+  // Bitfields with one bit per binding indicating usage.
+  struct {
+    uint64_t read_only;
+    uint64_t indirect;
+  } binding_flags;
   IREE_TRACE(iree_string_view_t function_name;)
 } iree_hal_metal_kernel_params_t;
 

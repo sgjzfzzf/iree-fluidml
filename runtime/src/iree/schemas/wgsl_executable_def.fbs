@@ -12,6 +12,22 @@ namespace iree.hal.wgsl;
 file_identifier "WGSL";
 file_extension "wgsl";
 
+// Information about an exported function on the executable.
+table ExportDef {
+  // Ordinal of the shader module containing the entry point in the executable
+  // libraries list.
+  shader_module_ordinal:uint32;
+
+  // Total number of 32-bit push constants used by the export.
+  constant_count:uint32;
+
+  // Binding count and flags for each binding.
+  binding_flags:[BindingBits];
+
+  // Optional debug information related to the export.
+  debug_info:iree.hal.debug.ExportDef;
+}
+
 // Contents of one WGPUShaderModule, possibly with multiple entry points.
 // Entry points have the name "dN" where N is the executable-wide entry point
 // ordinal.
@@ -24,12 +40,11 @@ table ShaderModuleDef {
 }
 
 table ExecutableDef {
+  // Exported functions in canonical executable entry point order.
+  exports:[ExportDef];
+
   // An ordered list of shader modules, each containing 1+ entry points.
   shader_modules:[ShaderModuleDef];
-
-  // A mapping of executable entry point ordinals to the shader module in which
-  // they reside.
-  entry_points:[uint];
 
   // Embedded source files sorted ascending by path.
   source_files:[iree.hal.debug.SourceFileDef];

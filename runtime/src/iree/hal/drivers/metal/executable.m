@@ -24,6 +24,10 @@ typedef struct iree_hal_metal_executable_t {
   iree_hal_resource_t resource;
   iree_allocator_t host_allocator;
 
+  // All loaded/compiled libraries.
+  iree_host_size_t library_count;
+  id<MTLLibrary>* libraries;
+
   // TODO(#18154): simplify struct per export.
   iree_host_size_t export_count;
   iree_hal_metal_kernel_params_t exports[];
@@ -68,63 +72,102 @@ static iree_status_t iree_hal_metal_executable_flatbuffer_verify(
   iree_hal_metal_ExecutableDef_table_t executable_def =
       iree_hal_metal_ExecutableDef_as_root(flatbuffer_data.data);
 
-  flatbuffers_string_vec_t entry_points_vec =
-      iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
-  size_t entry_point_count = flatbuffers_string_vec_len(entry_points_vec);
-  for (size_t i = 0; i < entry_point_count; ++i) {
-    if (!flatbuffers_string_len(flatbuffers_string_vec_at(entry_points_vec, i))) {
+  // TODO(#18154): drop legacy flatbuffers compatibility.
+  iree_hal_metal_ExportDef_vec_t exports_vec =
+      iree_hal_metal_ExecutableDef_exports_get(executable_def);
+  if (exports_vec != NULL) {
+    iree_hal_metal_LibraryDef_vec_t libraries_vec =
+        iree_hal_metal_ExecutableDef_libraries_get(executable_def);
+
+    for (size_t i = 0; i < iree_hal_metal_ExportDef_vec_len(exports_vec); ++i) {
+      iree_hal_metal_ExportDef_table_t export_def = iree_hal_metal_ExportDef_vec_at(exports_vec, i);
+      uint32_t library_ordinal = iree_hal_metal_ExportDef_library_ordinal(export_def);
+      if (library_ordinal >= iree_hal_metal_LibraryDef_vec_len(libraries_vec)) {
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "export %" PRIhsz " references invalid library ordinal %u", i,
+                                library_ordinal);
+      }
+
+      if (!flatbuffers_string_len(iree_hal_metal_ExportDef_entry_point_get(export_def))) {
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "export %" PRIhsz " has no string identifier specified", i);
+      }
+
+      uint32_t constant_count = iree_hal_metal_ExportDef_constant_count_get(export_def);
+      if (constant_count > IREE_HAL_METAL_MAX_PUSH_CONSTANT_COUNT) {
+        return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                                "dispatch requiring %u constants exceeds limit of %d",
+                                constant_count, IREE_HAL_METAL_MAX_PUSH_CONSTANT_COUNT);
+      }
+
+      iree_hal_metal_BindingBits_vec_t binding_flags_vec =
+          iree_hal_metal_ExportDef_binding_flags_get(export_def);
+      size_t binding_count = iree_hal_metal_BindingBits_vec_len(binding_flags_vec);
+      if (binding_count > IREE_HAL_METAL_MAX_DESCRIPTOR_SET_BINDING_COUNT) {
+        return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                                "dispatch requiring %" PRIhsz " bindings exceeds limit of %d",
+                                binding_count, IREE_HAL_METAL_MAX_DESCRIPTOR_SET_BINDING_COUNT);
+      }
+    }
+  } else {
+    flatbuffers_string_vec_t entry_points_vec =
+        iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
+    size_t entry_point_count = flatbuffers_string_vec_len(entry_points_vec);
+    for (size_t i = 0; i < entry_point_count; ++i) {
+      if (!flatbuffers_string_len(flatbuffers_string_vec_at(entry_points_vec, i))) {
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "executable entry point %zu has no name", i);
+      }
+    }
+
+    iree_hal_metal_ThreadgroupSize_vec_t threadgroup_sizes_vec =
+        iree_hal_metal_ExecutableDef_threadgroup_sizes(executable_def);
+    size_t threadgroup_size_count = iree_hal_metal_ThreadgroupSize_vec_len(threadgroup_sizes_vec);
+    if (!threadgroup_size_count) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "no threadgroup sizes present");
+    }
+
+    if (entry_point_count != threadgroup_size_count) {
       return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                              "executable entry point %zu has no name", i);
+                              "entry points (%zu) and thread group sizes (%zu) count mismatch",
+                              entry_point_count, threadgroup_size_count);
     }
-  }
 
-  iree_hal_metal_ThreadgroupSize_vec_t threadgroup_sizes_vec =
-      iree_hal_metal_ExecutableDef_threadgroup_sizes(executable_def);
-  size_t threadgroup_size_count = iree_hal_metal_ThreadgroupSize_vec_len(threadgroup_sizes_vec);
-  if (!threadgroup_size_count) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "no threadgroup sizes present");
-  }
-
-  if (entry_point_count != threadgroup_size_count) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "entry points (%zu) and thread group sizes (%zu) count mismatch",
-                            entry_point_count, threadgroup_size_count);
-  }
-
-  flatbuffers_string_vec_t shader_libraries_vec =
-      iree_hal_metal_ExecutableDef_shader_libraries_get(executable_def);
-  size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
-  for (size_t i = 0; i < shader_library_count; ++i) {
-    if (!flatbuffers_string_len(flatbuffers_string_vec_at(shader_libraries_vec, i))) {
+    flatbuffers_string_vec_t shader_libraries_vec =
+        iree_hal_metal_ExecutableDef_shader_libraries_get(executable_def);
+    size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
+    for (size_t i = 0; i < shader_library_count; ++i) {
+      if (!flatbuffers_string_len(flatbuffers_string_vec_at(shader_libraries_vec, i))) {
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "executable shader library %zu is empty", i);
+      }
+    }
+    if (shader_library_count != 0 && entry_point_count != shader_library_count) {
       return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                              "executable shader library %zu is empty", i);
+                              "entry points (%zu) and source libraries (%zu) count mismatch",
+                              entry_point_count, shader_library_count);
     }
-  }
-  if (shader_library_count != 0 && entry_point_count != shader_library_count) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "entry points (%zu) and source libraries (%zu) count mismatch",
-                            entry_point_count, shader_library_count);
-  }
 
-  flatbuffers_string_vec_t shader_sources_vec =
-      iree_hal_metal_ExecutableDef_shader_sources_get(executable_def);
-  size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
-  for (size_t i = 0; i < shader_source_count; ++i) {
-    if (!flatbuffers_string_len(flatbuffers_string_vec_at(shader_sources_vec, i))) {
-      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "executable shader source %zu is empty",
-                              i);
+    flatbuffers_string_vec_t shader_sources_vec =
+        iree_hal_metal_ExecutableDef_shader_sources_get(executable_def);
+    size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
+    for (size_t i = 0; i < shader_source_count; ++i) {
+      if (!flatbuffers_string_len(flatbuffers_string_vec_at(shader_sources_vec, i))) {
+        return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "executable shader source %zu is empty", i);
+      }
     }
-  }
 
-  if (shader_source_count != 0 && entry_point_count != shader_source_count) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "entry points (%zu) and source strings (%zu) count mismatch",
-                            entry_point_count, shader_source_count);
-  }
+    if (shader_source_count != 0 && entry_point_count != shader_source_count) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "entry points (%zu) and source strings (%zu) count mismatch",
+                              entry_point_count, shader_source_count);
+    }
 
-  if (!shader_library_count && !shader_source_count) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "missing shader library or source strings");
+    if (!shader_library_count && !shader_source_count) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "missing shader library or source strings");
+    }
   }
 
   return iree_ok_status();
@@ -279,12 +322,18 @@ iree_status_t iree_hal_metal_executable_create(
   });
 
   // Create the HAL executable with storage for dynamic arrays.
-  iree_host_size_t total_size = export_count * sizeof(executable->exports[0]) +
-                                sizeof(*executable) + total_entry_point_name_chars;
+  iree_host_size_t library_count = iree_hal_metal_LibraryDef_vec_len(libraries_vec);
+  iree_host_size_t total_size =
+      export_count * sizeof(executable->exports[0]) + sizeof(*executable) +
+      library_count * sizeof(executable->libraries[0]) + total_entry_point_name_chars;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_allocator_malloc(host_allocator, total_size, (void**)&executable));
   iree_hal_resource_initialize(&iree_hal_metal_executable_vtable, &executable->resource);
   executable->host_allocator = host_allocator;
+  executable->library_count = library_count;
+  executable->libraries = (id<MTLLibrary>*)((uint8_t*)executable + sizeof(*executable) +
+                                            export_count * sizeof(executable->exports[0]));
+  memset(executable->libraries, 0, library_count * sizeof(executable->libraries[0]));
   executable->export_count = export_count;
   memset(executable->exports, 0, export_count * sizeof(executable->exports[0]));
   IREE_TRACE(char* string_table_buffer = (char*)((uint8_t*)executable->libraries +
@@ -299,61 +348,147 @@ iree_status_t iree_hal_metal_executable_create(
   MTLCompileOptions* compile_options = [MTLCompileOptions new];  // +1
   compile_options.languageVersion = MTLLanguageVersion3_0;
 
-  flatbuffers_string_vec_t entry_points_vec =
-      iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
-  iree_hal_metal_ThreadgroupSize_vec_t threadgroup_sizes_vec =
-      iree_hal_metal_ExecutableDef_threadgroup_sizes(executable_def);
-  flatbuffers_string_vec_t shader_libraries_vec =
-      iree_hal_metal_ExecutableDef_shader_libraries_get(executable_def);
-  flatbuffers_string_vec_t shader_sources_vec =
-      iree_hal_metal_ExecutableDef_shader_sources_get(executable_def);
-  size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
-  size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
-  for (size_t i = 0, e = iree_max(shader_library_count, shader_source_count); i < e; ++i) {
-    id<MTLLibrary> library = nil;
-    id<MTLFunction> function = nil;
-    id<MTLComputePipelineState> pso = nil;
-
-    flatbuffers_string_t source_code = NULL;
-    flatbuffers_string_t entry_point = flatbuffers_string_vec_at(entry_points_vec, i);
-    iree_string_view_t entry_point_view =
-        iree_make_string_view(entry_point, flatbuffers_string_len(entry_point));
-
-    if (shader_library_count != 0) {
-      flatbuffers_string_t source_library = flatbuffers_string_vec_at(shader_libraries_vec, i);
-      status = iree_hal_metal_load_mtllib(
-          iree_make_const_byte_span(source_library, flatbuffers_string_len(source_library)),
-          entry_point_view, device, &library);
-    } else {
-      source_code = flatbuffers_string_vec_at(shader_sources_vec, i);
-      status = iree_hal_metal_compile_msl(
-          iree_make_string_view(source_code, flatbuffers_string_len(source_code)), entry_point_view,
-          device, compile_options, &library);
+  iree_status_t status = iree_ok_status();
+  if (libraries_vec) {
+    for (iree_host_size_t i = 0; i < library_count; ++i) {
+      iree_hal_metal_LibraryDef_table_t library_def =
+          iree_hal_metal_LibraryDef_vec_at(libraries_vec, i);
+      flatbuffers_string_t library_str = iree_hal_metal_LibraryDef_library_get(library_def);
+      if (flatbuffers_string_len(library_str) > 0) {
+        status = iree_hal_metal_load_mtllib(
+            iree_make_const_byte_span(library_str, flatbuffers_string_len(library_str)),
+            iree_string_view_empty(), device, &executable->libraries[i]);
+      } else {
+        flatbuffers_string_t source_str = iree_hal_metal_LibraryDef_source_get(library_def);
+        status = iree_hal_metal_compile_msl(
+            iree_make_string_view(source_str, flatbuffers_string_len(source_str)),
+            iree_string_view_empty(), device, compile_options, &executable->libraries[i]);
+      }
+      if (!iree_status_is_ok(status)) break;
     }
-    if (!iree_status_is_ok(status)) break;
+  }
 
-    status = iree_hal_metal_create_pipeline_object(library, entry_point_view, source_code, device,
-                                                   &function, &pso);
-    if (!iree_status_is_ok(status)) break;
+  if (iree_status_is_ok(status)) {
+    if (exports_vec) {
+      for (iree_host_size_t i = 0; i < export_count; ++i) {
+        iree_hal_metal_ExportDef_table_t export_def =
+            iree_hal_metal_ExportDef_vec_at(exports_vec, i);
+        uint32_t library_ordinal = iree_hal_metal_ExportDef_library_ordinal(export_def);
+        flatbuffers_string_t entry_point = iree_hal_metal_ExportDef_entry_point_get(export_def);
 
-    // Package required parameters for kernel launches for each entry point.
-    iree_hal_metal_kernel_params_t* params = &executable->exports[i];
-    params->library = library;
-    params->function = function;
-    params->pso = pso;
-    params->threadgroup_size[0] = threadgroup_sizes_vec[i].x;
-    params->threadgroup_size[1] = threadgroup_sizes_vec[i].y;
-    params->threadgroup_size[2] = threadgroup_sizes_vec[i].z;
-    params->layout = executable_params->pipeline_layouts[i];
-    iree_hal_pipeline_layout_retain(params->layout);
+        iree_hal_metal_kernel_params_t* params = &executable->exports[i];
+        params->library = executable->libraries[library_ordinal];
+        [params->library retain];  // +1
 
-    // Stash the entry point name in the string table for use when tracing.
-    IREE_TRACE({
-      iree_host_size_t entry_name_length = flatbuffers_string_len(entry_point);
-      memcpy(string_table_buffer, entry_point, entry_name_length);
-      params->function_name = iree_make_string_view(string_table_buffer, entry_name_length);
-      string_table_buffer += entry_name_length;
-    });
+        status = iree_hal_metal_create_pipeline_object(
+            params->library,
+            iree_make_string_view(entry_point, flatbuffers_string_len(entry_point)), NULL, device,
+            &params->function, &params->pso);
+        if (!iree_status_is_ok(status)) break;
+
+        iree_hal_metal_ThreadgroupSize_struct_t threadgroup_size =
+            iree_hal_metal_ExportDef_threadgroup_size_get(export_def);
+        params->threadgroup_size[0] = threadgroup_size->x;
+        params->threadgroup_size[1] = threadgroup_size->y;
+        params->threadgroup_size[2] = threadgroup_size->z;
+
+        params->constant_count = iree_hal_metal_ExportDef_constant_count_get(export_def);
+
+        iree_hal_metal_BindingBits_vec_t binding_flags_vec =
+            iree_hal_metal_ExportDef_binding_flags_get(export_def);
+        size_t binding_count = iree_hal_metal_BindingBits_vec_len(binding_flags_vec);
+        params->binding_count = binding_count;
+        for (size_t j = 0; j < binding_count; ++j) {
+          iree_hal_metal_BindingBits_enum_t flags =
+              iree_hal_metal_BindingBits_vec_at(binding_flags_vec, j);
+          uint64_t binding_bit = 1ull << j;
+          if (iree_all_bits_set(flags, iree_hal_metal_BindingBits_READ_ONLY)) {
+            params->binding_flags.read_only |= binding_bit;
+          }
+          if (iree_all_bits_set(flags, iree_hal_metal_BindingBits_INDIRECT)) {
+            params->binding_flags.indirect |= binding_bit;
+          }
+        }
+
+        // Stash the entry point name in the string table for use when tracing.
+        IREE_TRACE({
+          iree_host_size_t entry_name_length = flatbuffers_string_len(entry_point);
+          memcpy(string_table_buffer, entry_point, entry_name_length);
+          params->function_name = iree_make_string_view(string_table_buffer, entry_name_length);
+          string_table_buffer += entry_name_length;
+        });
+      }
+    } else {
+      flatbuffers_string_vec_t entry_points_vec =
+          iree_hal_metal_ExecutableDef_entry_points_get(executable_def);
+      iree_hal_metal_ThreadgroupSize_vec_t threadgroup_sizes_vec =
+          iree_hal_metal_ExecutableDef_threadgroup_sizes(executable_def);
+      flatbuffers_string_vec_t shader_libraries_vec =
+          iree_hal_metal_ExecutableDef_shader_libraries_get(executable_def);
+      flatbuffers_string_vec_t shader_sources_vec =
+          iree_hal_metal_ExecutableDef_shader_sources_get(executable_def);
+      size_t shader_library_count = flatbuffers_string_vec_len(shader_libraries_vec);
+      size_t shader_source_count = flatbuffers_string_vec_len(shader_sources_vec);
+      for (size_t i = 0, e = iree_max(shader_library_count, shader_source_count); i < e; ++i) {
+        id<MTLLibrary> library = nil;
+        id<MTLFunction> function = nil;
+        id<MTLComputePipelineState> pso = nil;
+
+        flatbuffers_string_t source_code = NULL;
+        flatbuffers_string_t entry_point = flatbuffers_string_vec_at(entry_points_vec, i);
+        iree_string_view_t entry_point_view =
+            iree_make_string_view(entry_point, flatbuffers_string_len(entry_point));
+
+        if (shader_library_count != 0) {
+          flatbuffers_string_t source_library = flatbuffers_string_vec_at(shader_libraries_vec, i);
+          status = iree_hal_metal_load_mtllib(
+              iree_make_const_byte_span(source_library, flatbuffers_string_len(source_library)),
+              entry_point_view, device, &library);
+        } else {
+          source_code = flatbuffers_string_vec_at(shader_sources_vec, i);
+          status = iree_hal_metal_compile_msl(
+              iree_make_string_view(source_code, flatbuffers_string_len(source_code)),
+              entry_point_view, device, compile_options, &library);
+        }
+        if (!iree_status_is_ok(status)) break;
+
+        status = iree_hal_metal_create_pipeline_object(library, entry_point_view, source_code,
+                                                       device, &function, &pso);
+        if (!iree_status_is_ok(status)) break;
+
+        // Package required parameters for kernel launches for each entry point.
+        iree_hal_metal_kernel_params_t* params = &executable->exports[i];
+        params->library = library;
+        params->function = function;
+        params->pso = pso;
+        params->threadgroup_size[0] = threadgroup_sizes_vec[i].x;
+        params->threadgroup_size[1] = threadgroup_sizes_vec[i].y;
+        params->threadgroup_size[2] = threadgroup_sizes_vec[i].z;
+        params->layout = executable_params->pipeline_layouts[i];
+        iree_hal_pipeline_layout_retain(params->layout);
+
+        params->constant_count = iree_hal_metal_pipeline_layout_push_constant_count(params->layout);
+
+        const iree_hal_descriptor_set_layout_t* set0_layout =
+            iree_hal_metal_pipeline_layout_descriptor_set_layout(params->layout, 0);
+        params->binding_count = iree_hal_metal_descriptor_set_layout_binding_count(set0_layout);
+        for (uint32_t j = 0; j < params->binding_count; ++j) {
+          const iree_hal_descriptor_set_layout_binding_t* binding =
+              iree_hal_metal_descriptor_set_layout_binding(set0_layout, j);
+          if (iree_all_bits_set(binding->flags, IREE_HAL_DESCRIPTOR_FLAG_READ_ONLY)) {
+            params->binding_flags.read_only = 1ull << j;
+          }
+        }
+
+        // Stash the entry point name in the string table for use when tracing.
+        IREE_TRACE({
+          iree_host_size_t entry_name_length = flatbuffers_string_len(entry_point);
+          memcpy(string_table_buffer, entry_point, entry_name_length);
+          params->function_name = iree_make_string_view(string_table_buffer, entry_name_length);
+          string_table_buffer += entry_name_length;
+        });
+      }
+    }
   }
 
   [compile_options release];  // -1
@@ -378,6 +513,11 @@ static void iree_hal_metal_executable_destroy(iree_hal_executable_t* base_execut
     [entry_point->function release];  // -1
     [entry_point->library release];   // -1
     iree_hal_pipeline_layout_release(entry_point->layout);
+  }
+
+  for (iree_host_size_t i = 0; i < executable->library_count; ++i) {
+    id<MTLLibrary> library = executable->libraries[i];
+    [library release];  // -1
   }
 
   iree_allocator_free(executable->host_allocator, executable);

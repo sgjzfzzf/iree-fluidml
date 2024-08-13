@@ -1147,6 +1147,26 @@ static iree_status_t iree_hal_metal_command_segment_create_dispatch2(
   IREE_RETURN_AND_END_ZONE_IF_ERROR(z0, iree_hal_metal_executable_entry_point_kernel_params(
                                             executable, entry_point, &kernel_params));
 
+  // Push constants are pulled directly from the args and copied into the
+  // command buffer. Note that we require 4 byte alignment and if the input
+  // buffer is not aligned we have to fail.
+  if (IREE_UNLIKELY((constants.data_length % sizeof(uint32_t)) != 0)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION, "constants must be 4-byte aligned");
+  } else if (IREE_UNLIKELY(constants.data_length !=
+                           kernel_params.constant_count * sizeof(uint32_t))) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "constant count mismatch, expected %u but was provided %" PRIhsz,
+                            (uint32_t)kernel_params.constant_count,
+                            constants.data_length / sizeof(uint32_t));
+  }
+
+  // Bindings map to a single flat bind group list.
+  if (IREE_UNLIKELY(bindings.count != kernel_params.binding_count)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "binding count mismatch, expected %u but was provided %" PRIhsz,
+                            (uint32_t)kernel_params.binding_count, bindings.count);
+  }
+
   // Allocate the command segment and keep track of all necessary API data.
   uint8_t* storage_base = NULL;
   iree_hal_metal_command_segment_t* segment = NULL;
@@ -1164,8 +1184,6 @@ static iree_status_t iree_hal_metal_command_segment_create_dispatch2(
   segment->dispatch.kernel_params = kernel_params;
 
   // Copy descriptors from all sets to the end of the current segment for later access.
-  const iree_hal_descriptor_set_layout_t* set_layout =
-      iree_hal_metal_pipeline_layout_descriptor_set_layout(kernel_params.layout, 0);
   segment->dispatch.descriptor_count = bindings.count;
   segment->dispatch.descriptors = (iree_hal_metal_descriptor_t*)(storage_base + sizeof(*segment));
   for (iree_host_size_t i = 0; i < bindings.count; ++i) {
@@ -1176,9 +1194,10 @@ static iree_status_t iree_hal_metal_command_segment_create_dispatch2(
     descriptor->buffer = bindings.values[i].buffer;
     descriptor->offset = bindings.values[i].offset;
 
-    const iree_hal_descriptor_set_layout_binding_t* binding_params =
-        iree_hal_metal_descriptor_set_layout_binding(set_layout, descriptor->binding);
-    descriptor->usage = iree_hal_metal_get_metal_resource_usage(binding_params);
+    descriptor->usage = MTLResourceUsageRead;
+    if ((kernel_params.binding_flags.read_only & (1ull << i)) == 0) {
+      descriptor->usage |= MTLResourceUsageWrite;
+    }
 
     if (descriptor->buffer) {
       IREE_RETURN_AND_END_ZONE_IF_ERROR(
