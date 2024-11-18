@@ -1119,3 +1119,17 @@ iree_add_install_target(
   COMPONENT IREETools-Runtime
   ADD_TO iree-install-tools
 )
+
+# Exclude specific third-party files from sccache
+set(EXCLUDED_FILES
+    ${CMAKE_SOURCE_DIR}/third_party/llvm-project/lib/Target/AArch64/AArch64ISelDAGToDAG.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/llvm-project/lib/Target/AArch64/AnotherFile.cpp
+)
+
+# Apply custom properties to these files
+foreach(file ${EXCLUDED_FILES})
+    set_source_files_properties(
+        ${file}
+        PROPERTIES COMPILE_FLAGS "-DSCCACHE_DISABLE=1"
+    )
+endforeach()
