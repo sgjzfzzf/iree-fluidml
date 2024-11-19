@@ -1122,8 +1122,8 @@ iree_add_install_target(
 
 # Exclude specific third-party files from sccache
 set(EXCLUDED_FILES
-    ${CMAKE_SOURCE_DIR}/third_party/llvm-project/lib/Target/AArch64/AArch64ISelDAGToDAG.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/llvm-project/lib/Target/AArch64/AnotherFile.cpp
+    third_party/llvm-project/lib/Target/AArch64/AArch64ISelDAGToDAG.cpp
+    third_party/llvm-project/lib/Target/AArch64/AArch64ISelDAGToDAG.cpp.obj
 )
 
 # Apply custom properties to these files
