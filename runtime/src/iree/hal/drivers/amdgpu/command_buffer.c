@@ -43,7 +43,7 @@ static iree_status_t iree_hal_amdgpu_translate_device_buffer_ref(
   // Translate range from the allocated buffer base along with the reference
   // offset. This avoids the device needing to read the HAL buffer when issuing.
   out_ref->offset = iree_hal_buffer_byte_offset(ref.buffer) + ref.offset;
-  if (ref.length == IREE_WHOLE_BUFFER) {
+  if (ref.length == IREE_HAL_WHOLE_BUFFER) {
     out_ref->length = iree_hal_buffer_byte_length(ref.buffer);
   } else {
     out_ref->length = ref.length;
@@ -398,6 +398,10 @@ static iree_status_t iree_hal_amdgpu_command_encoder_end_block(
       (query_ids ? query_ids->count *
                        sizeof(iree_hal_amdgpu_device_command_query_id_t)
                  : 0);
+
+  // TODO(benvanik): sort the commands by type? Would help us use larger
+  // workgroup sizes (but may need padding); today if we used >1 workgroup size
+  // and any command in the workgroup was different we'd end up in unhappy land.
 
   // Upload the block metadata to each device.
   for (iree_host_size_t i = 0; i < encoder->device_count; ++i) {

@@ -363,6 +363,11 @@ static iree_status_t iree_hal_amdgpu_driver_dump_device_info(
     iree_string_builder_t* builder) {
   iree_hal_amdgpu_driver_t* driver = iree_hal_amdgpu_driver_cast(base_driver);
 
+  // TODO(benvanik): include list of available device library archs and indicate
+  // which was selected. Could just have a string builder method in
+  // device_library.h for something like `[amdgcn-blah-blah,
+  // **amdgcn-blah-blah**, ...]`.
+
   // TODO(benvanik): query everything like rocminfo (so we don't have to ship
   // it).
   (void)driver;

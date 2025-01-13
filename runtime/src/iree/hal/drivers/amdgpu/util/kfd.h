@@ -14,6 +14,9 @@
 //===----------------------------------------------------------------------===//
 // This exists to handle some driver features that aren't yet exposed through
 // HSA APIs. Ideally we get them added and remove all of this.
+//
+// Tracking for AMDKFD_IOC_GET_CLOCK_COUNTERS:
+// https://github.com/ROCm/ROCR-Runtime/issues/278
 
 // Tries to open /dev/kfd for read/write access.
 // It should be exceptionally rare that this fails: if HSA has already been

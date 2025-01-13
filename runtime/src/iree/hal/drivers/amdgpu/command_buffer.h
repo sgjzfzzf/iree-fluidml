@@ -119,7 +119,11 @@ iree_status_t iree_hal_amdgpu_command_buffer_options_verify(
 // iree_hal_amdgpu_command_buffer_t
 //===----------------------------------------------------------------------===//
 
-// Creates AMDGPU command buffer.
+// Creates an AMDGPU command buffer with the given |options| controlling how
+// it is recorded and prepared for execution.
+//
+// Referenced data structures in the options such as block pools must remain
+// live for the lifetime of the command buffer.
 iree_status_t iree_hal_amdgpu_command_buffer_create(
     const iree_hal_amdgpu_command_buffer_options_t* options,
     iree_allocator_t host_allocator,

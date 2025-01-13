@@ -152,7 +152,7 @@ static iree_status_t iree_hal_amdgpu_resolve_binding(
   out_device_ref->type = type;
   out_device_ref->offset = binding.offset;
   out_device_ref->length =
-      binding.length != IREE_WHOLE_BUFFER
+      binding.length != IREE_HAL_WHOLE_BUFFER
           ? binding.length
           : iree_hal_buffer_byte_length(binding.buffer) - binding.offset;
   return iree_ok_status();

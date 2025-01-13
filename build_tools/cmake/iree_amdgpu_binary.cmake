@@ -118,7 +118,8 @@ function(iree_amdgpu_binary)
   add_custom_command(
     OUTPUT
       "${_OUT}"
-    COMMAND ${IREE_LLD_BINARY}
+    COMMAND
+      ${IREE_LLD_BINARY}
       "-flavor" "gnu"
       "-m" "elf64_amdgpu"
       "--build-id=none"

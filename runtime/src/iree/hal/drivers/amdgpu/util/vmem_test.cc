@@ -77,6 +77,7 @@ TEST_F(VMemTest, FindFineGlobalMemoryPool) {
   IREE_ASSERT_OK(iree_hsa_amd_memory_pool_get_info(
       IREE_LIBHSA(&libhsa), gpu_pool, HSA_AMD_MEMORY_POOL_INFO_GLOBAL_FLAGS,
       &global_flags));
+  // NOTE: the pool may have either flag set.
   EXPECT_TRUE(iree_any_bit_set(
       global_flags,
       HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED |

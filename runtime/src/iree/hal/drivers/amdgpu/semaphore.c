@@ -185,6 +185,9 @@ static iree_status_t iree_hal_amdgpu_internal_semaphore_signal(
   // handling is not possible while Aborted indicates that an individual work
   // stream may be invalid but unrelated work streams may still progress.
 
+  // DO NOT SUBMIT
+  // need to process wake list
+
   (void)semaphore;
   iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
                                           "semaphore signal not implemented");
