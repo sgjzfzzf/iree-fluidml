@@ -21,7 +21,7 @@ bool needToPackSubByteElements(Type type) {
   unsigned bitWidth = isa<TensorType>(type)
                           ? IREE::Util::getTypeBitWidth(
                                 dyn_cast<TensorType>(type).getElementType())
-                          : type.getIntOrFloatBitWidth();
+                          : IREE::Util::getTypeBitWidth(type);
 
   auto rankedTensorType = llvm::dyn_cast_or_null<RankedTensorType>(type);
   bool isPackedStorage = rankedTensorType &&
