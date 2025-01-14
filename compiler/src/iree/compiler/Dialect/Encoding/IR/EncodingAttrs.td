@@ -17,49 +17,53 @@ include "mlir/IR/EnumAttr.td"
 //===---------------------------------------------------------------------===//
 
 class IREEEncoding_Attr<string name, list<Trait> traits = []>
-  : AttrDef<IREEEncoding_Dialect, name, traits>;
+    : AttrDef<IREEEncoding_Dialect, name, traits>;
 
-class IREEEncoding_I32EnumAttr<string name, string summary, list<I32EnumAttrCase> cases>
+class IREEEncoding_I32EnumAttr<string name, string summary,
+                               list<I32EnumAttrCase> cases>
     : I32EnumAttr<name, summary, cases> {
   let cppNamespace = "::mlir::iree_compiler::IREE::Encoding";
   let genSpecializedAttr = 0;
 }
 
 class IREEEncoding_EnumAttr<EnumAttrInfo enumInfo, string name = "">
-  : EnumAttr<IREEEncoding_Dialect, enumInfo, name>;
+    : EnumAttr<IREEEncoding_Dialect, enumInfo, name>;
 
 // Enums for tagging operand operation in an EncodingAttr
 def MATMUL : I32EnumAttrCase<"matmul", 0>;
-def CONV   : I32EnumAttrCase<"conv", 1>;
+def CONV : I32EnumAttrCase<"conv", 1>;
 
-def EncodingOpType : IREEEncoding_I32EnumAttr<"EncodingOpType",
-    "Tracks the type of operation of the operand.", [
-      MATMUL,
-      CONV,
-    ]>;
+def EncodingOpType
+    : IREEEncoding_I32EnumAttr<"EncodingOpType",
+                               "Tracks the type of operation of the operand.", [
+                                 MATMUL,
+                                 CONV,
+                               ]>;
 
-def EncodingOpTypeAttr:
-  IREEEncoding_EnumAttr<EncodingOpType, "optype">;
+def EncodingOpTypeAttr : IREEEncoding_EnumAttr<EncodingOpType, "optype">;
 
-
-def PackedStorageAttr : IREEEncoding_Attr<"PackedStorage"> {
+def PackedStorageAttr
+    : IREEEncoding_Attr<"PackedStorage",
+                        [DeclareAttrInterfaceMethods<
+                            IREEEncoding_EncodingLayoutAttrInterface, [
+                              "calculateStorageSizeInBytes",
+                            ]>]> {
   let mnemonic = "packed_storage";
   let summary = [{Indicates packed storage data type.}];
-  let description = [{
-    This attribute indicates this is a back-to-back packed storage in memory.
-    This attribute takes no arguments.
-  }];
+  let description =
+      [{This attribute indicates this is a back - to -
+        back packed storage in memory.This attribute takes no arguments.}];
   let genVerifyDecl = 0;
 }
 
-def EncodingAttr :
-    IREEEncoding_Attr<"Encoding", [
-      DeclareAttrInterfaceMethods<IREEEncoding_EncodingLayoutAttrInterface, [
-        "calculateStorageSizeInBytes",
-      ]>
-    ]> {
+def EncodingAttr
+    : IREEEncoding_Attr<"Encoding",
+                        [DeclareAttrInterfaceMethods<
+                            IREEEncoding_EncodingLayoutAttrInterface, [
+                              "calculateStorageSizeInBytes",
+                            ]>]> {
   let mnemonic = "encoding";
-  let summary = [{information to decide how to data-tile a tensor}];
+  let summary = [{information to decide how to data - tile a tensor}];
   let description = [{
     This attribute describes the change in the layout for
     a given tensor to execute subsequent operations on
@@ -112,8 +116,8 @@ def EncodingAttr :
     AffineMap getMapForOperandIndex() const;
 
     /// Given the dim position of the encoding `user_indexing_maps`, returns the
-    /// matching index of the given encoding's tensor, using getMapForOperandIndex
-    /// bcast_map and user_indexing_map.
+    /// matching index of the given encoding's tensor, using
+    /// getMapForOperandIndex bcast_map and user_indexing_map.
     std::optional<unsigned> mapDimToOperandIndex(int64_t dimPos) const;
 
     /// Returns an integer array with values in `round_dims_to`.

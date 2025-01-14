@@ -152,6 +152,45 @@ static int32_t getRoundedElementByteWidth(Type type) {
   return llvm::PowerOf2Ceil(byteAligned);
 }
 
+Value PackedStorageAttr::calculateStorageSizeInBytes(
+    Location loc, OpBuilder &builder, RankedTensorType type,
+    ValueRange dynamicDims) const {
+  unsigned elementBits = type.getElementTypeBitWidth();
+  assert(elementBits == 1 && "packed storage only supported for i1 for now");
+
+  // Calculate all static dims first, if any.
+  bool isPackedStorage = IREE::Encoding::hasPackedStorageAttr(type);
+  int64_t staticCount = 1;
+  if (!isPackedStorage) {
+    staticCount *= elementBits * 8;
+  }
+
+  for (unsigned i = 0; i < type.getRank(); ++i) {
+    if (!type.isDynamicDim(i))
+      staticCount *= type.getDimSize(i);
+  }
+  // Scale by dynamic dims, if present.
+  auto value =
+      builder.create<arith::ConstantIndexOp>(loc, staticCount).getResult();
+  for (auto dim : dynamicDims) {
+    value = builder.createOrFold<arith::MulIOp>(loc, value, dim);
+  }
+  // Sub-byte packing requires putting multiple elements in the same byte.
+  if (isPackedStorage) {
+    assert(8 % elementBits == 0);
+    unsigned byteElements = 8 / elementBits;
+    // TODO(antiagainst): We may want to emit runtime check to make sure this is
+    // divisible.
+    auto divisor = builder.create<arith::ConstantIndexOp>(loc, byteElements);
+    if (!isPackedStorage && dynamicDims.empty() &&
+        (staticCount * elementBits) % 8 != 0) {
+      return nullptr;
+    }
+    value = builder.createOrFold<arith::CeilDivUIOp>(loc, value, divisor);
+  }
+  return value;
+}
+
 Value EncodingAttr::calculateStorageSizeInBytes(Location loc,
                                                 OpBuilder &builder,
                                                 RankedTensorType type,
@@ -190,6 +229,10 @@ Value EncodingAttr::calculateStorageSizeInBytes(Location loc,
 
   constexpr int64_t kNumBitsInByte = 8;
   unsigned elementBits = getTypeBitWidth(type.getElementType());
+  // Deal with unpacked storage of i1.
+  if (elementBits == 1 && !IREE::Encoding::hasPackedStorageAttr(type)) {
+    elementBits = kNumBitsInByte;
+  }
   int64_t numBytesPerElem = 1;
   if (elementBits > kNumBitsInByte) {
     numBytesPerElem *= getRoundedElementByteWidth(type.getElementType());
