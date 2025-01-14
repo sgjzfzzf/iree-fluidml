@@ -17,7 +17,19 @@
 
 namespace mlir::iree_compiler {
 
-bool needToPackSubByteElementBitWidth(unsigned bitWidth) {
+bool needToPackSubByteElements(Type type) {
+  unsigned bitWidth = isa<TensorType>(type)
+                          ? IREE::Util::getTypeBitWidth(
+                                dyn_cast<TensorType>(type).getElementType())
+                          : type.getIntOrFloatBitWidth();
+
+  auto rankedTensorType = llvm::dyn_cast_or_null<RankedTensorType>(type);
+  bool isPackedStorage = rankedTensorType &&
+                         IREE::Encoding::hasPackedStorageAttr(rankedTensorType);
+  // i1 with packed memory layout does not need to be extended.
+  if (bitWidth == 1 && isPackedStorage) {
+    return true;
+  }
   // Require the original bit width to be some power of two for now to avoid
   // trickiness and weirdness of packing and cross-byte access.
   // Also disallow boolean values for now--they may require separate interface
@@ -25,31 +37,20 @@ bool needToPackSubByteElementBitWidth(unsigned bitWidth) {
   return bitWidth < 8 && llvm::isPowerOf2_32(bitWidth) && bitWidth != 1;
 }
 
-bool needToPackSubByteElements(RankedTensorType shapedType) {
-  unsigned bitWidth = IREE::Util::getTypeBitWidth(shapedType.getElementType());
-  // i1 with packed memory layout does not need to be extended.
-  if (bitWidth == 1 && IREE::Encoding::hasPackedStorageAttr(shapedType)) {
-    return true;
-  }
-  return needToPackSubByteElementBitWidth(bitWidth);
-}
+Type legalizeTensorStorageElementType(Type type) {
+  auto tensorType = llvm::cast<TensorType>(type);
+  auto elementType = tensorType.getElementType();
 
-static Type legalizeStorageElementTypeImpl(Type elementType,
-                                           bool isPackedStorage) {
   // Only handle integers; floats in MLIR all have aligned widths (today).
   auto intType = dyn_cast<IntegerType>(elementType);
   if (!intType)
     return elementType;
 
-  unsigned bitWidth = intType.getWidth();
-  if (bitWidth == 1 && isPackedStorage) {
-    return elementType;
-  }
-
   // For sub-byte elements, default to pack them into bytes.
-  if (needToPackSubByteElementBitWidth(bitWidth))
+  if (needToPackSubByteElements(type))
     return elementType;
 
+  unsigned bitWidth = intType.getWidth();
   // Otherwise, extend them to the next power-of-two bit width.
   unsigned alignedBitWidth =
       IREE::Util::getRoundedElementByteWidth(intType) * 8;
@@ -57,12 +58,6 @@ static Type legalizeStorageElementTypeImpl(Type elementType,
     return elementType;
   return IntegerType::get(elementType.getContext(), alignedBitWidth,
                           intType.getSignedness());
-}
-
-Type legalizeTensorStorageElementType(Type type) {
-  auto tensorType = llvm::cast<TensorType>(type);
-  return legalizeStorageElementTypeImpl(
-      tensorType.getElementType(), IREE::Encoding::hasPackedStorageAttr(type));
 }
 
 Value calculateStorageElementCountInBytes(Location loc,
@@ -80,13 +75,11 @@ Value calculateStorageElementCountInBytes(Location loc,
   Type alignedElementType = legalizeTensorStorageElementType(shapedType);
   unsigned elementBits = IREE::Util::getTypeBitWidth(alignedElementType);
 
-  bool isPackedStorage = IREE::Encoding::hasPackedStorageAttr(shapedType);
-  bool isI1WithPackedStorage = elementBits == 1 && isPackedStorage;
-
   // Calculate all static dims first, if any.
+  bool isI1WithPackedStorage =
+      elementBits == 1 && IREE::Encoding::hasPackedStorageAttr(shapedType);
   int64_t staticCount = 1;
-  if (!isI1WithPackedStorage &&
-      !needToPackSubByteElementBitWidth(elementBits)) {
+  if (!isI1WithPackedStorage && !needToPackSubByteElements(alignedElementType)) {
     staticCount *= IREE::Util::getRoundedElementByteWidth(alignedElementType);
   }
 
@@ -101,13 +94,13 @@ Value calculateStorageElementCountInBytes(Location loc,
     value = builder.createOrFold<arith::MulIOp>(loc, value, dim);
   }
   // Sub-byte packing requires putting multiple elements in the same byte.
-  if (isI1WithPackedStorage || needToPackSubByteElementBitWidth(elementBits)) {
+  if (isI1WithPackedStorage || needToPackSubByteElements(alignedElementType)) {
     assert(8 % elementBits == 0);
     unsigned byteElements = 8 / elementBits;
     // TODO(antiagainst): We may want to emit runtime check to make sure this is
     // divisible.
     auto divisor = builder.create<arith::ConstantIndexOp>(loc, byteElements);
-    if (!isPackedStorage && dynamicDims.empty() &&
+    if (!isI1WithPackedStorage && dynamicDims.empty() &&
         (staticCount * elementBits) % 8 != 0) {
       return nullptr;
     }
@@ -124,11 +117,8 @@ Value calculateStorageElementOffsetInBytes(Location loc,
   Type alignedElementType = legalizeTensorStorageElementType(originalType);
   unsigned elementBits = IREE::Util::getTypeBitWidth(alignedElementType);
 
-  bool isPackedStorage = IREE::Encoding::hasPackedStorageAttr(originalType);
-  bool isI1WithPackedStorage = elementBits == 1 && isPackedStorage;
-
   // Sub-byte packing requires putting multiple elements in the same byte.
-  if (isI1WithPackedStorage || needToPackSubByteElementBitWidth(elementBits)) {
+  if (needToPackSubByteElements(originalType)) {
     Value byteElements =
         builder.create<arith::ConstantIndexOp>(loc, 8 / elementBits);
     // TODO(antiagainst): We may want to emit runtime check to make sure this is

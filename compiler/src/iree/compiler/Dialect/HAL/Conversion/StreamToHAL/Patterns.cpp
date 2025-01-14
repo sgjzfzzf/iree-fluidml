@@ -479,8 +479,8 @@ struct TensorExportBufferViewOpPattern
     }
 
     auto loc = exportOp.getLoc();
-    auto tensorType = dropPackedStorageEncodingIfAny(
-        llvm::cast<RankedTensorType>(adaptor.getSourceEncoding()));
+    auto tensorType =
+        dropEncoding(llvm::cast<RankedTensorType>(adaptor.getSourceEncoding()));
     auto dynamicDims = adaptor.getSourceEncodingDims();
 
     // NOTE: we should have verified supported encodings/types at entry into the

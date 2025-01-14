@@ -168,9 +168,7 @@ static Value canonicalizeFillPattern(Value pattern, OpBuilder &builder) {
   //   %i8_val = (%i8_val << 2) | %i2_val
   //   %i8_val = (%i8_val << 2) | %i2_val
   //   %i8_val = (%i8_val << 2) | %i2_val
-  bool patternIsPacked =
-      IREE::Encoding::hasPackedStorageAttr(pattern.getType());
-  if (!patternIsPacked && needToPackSubByteElementBitWidth(elementBitWidth)) {
+  if (needToPackSubByteElements(pattern.getType())) {
     Type i8Type = builder.getI8Type();
     Value bitwidth = builder.createOrFold<arith::ConstantOp>(
         loc, i8Type, builder.getIntegerAttr(i8Type, elementBitWidth));

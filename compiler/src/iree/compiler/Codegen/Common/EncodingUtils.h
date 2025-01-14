@@ -80,9 +80,6 @@ protected:
 /// Returns the RankedTensorType without encodings.
 RankedTensorType dropEncoding(RankedTensorType type);
 
-/// Returns the RankedTensorType without packed storage encoding (if any).
-RankedTensorType dropPackedStorageEncodingIfAny(RankedTensorType type);
-
 /// Utility method to convert from `set_encoding` op to `pack` operation.
 /// NOTE: `source` could be returned when packing is not needed.
 FailureOr<Value> lowerSetEncodingOpToPackOp(
