@@ -37,7 +37,7 @@ bool needToPackSubByteElements(Type type) {
   return bitWidth < 8 && llvm::isPowerOf2_32(bitWidth) && bitWidth != 1;
 }
 
-Type legalizeTensorStorageElementType(Type type) {
+Type legalizeStorageElementType(Type type) {
   auto tensorType = llvm::cast<TensorType>(type);
   auto elementType = tensorType.getElementType();
 
@@ -72,7 +72,7 @@ Value calculateStorageElementCountInBytes(Location loc,
         loc, builder, shapedType, dynamicDims);
   }
 
-  Type alignedElementType = legalizeTensorStorageElementType(shapedType);
+  Type alignedElementType = legalizeStorageElementType(shapedType);
   unsigned elementBits = IREE::Util::getTypeBitWidth(alignedElementType);
 
   // Calculate all static dims first, if any.
@@ -114,7 +114,7 @@ Value calculateStorageElementOffsetInBytes(Location loc,
                                            RankedTensorType originalType,
                                            Value linearizedIndex,
                                            OpBuilder &builder) {
-  Type alignedElementType = legalizeTensorStorageElementType(originalType);
+  Type alignedElementType = legalizeStorageElementType(originalType);
   unsigned elementBits = IREE::Util::getTypeBitWidth(alignedElementType);
 
   // Sub-byte packing requires putting multiple elements in the same byte.
