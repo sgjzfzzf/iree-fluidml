@@ -79,7 +79,8 @@ Value calculateStorageElementCountInBytes(Location loc,
   bool isI1WithPackedStorage =
       elementBits == 1 && IREE::Encoding::hasPackedStorageAttr(shapedType);
   int64_t staticCount = 1;
-  if (!isI1WithPackedStorage && !needToPackSubByteElements(alignedElementType)) {
+  if (!isI1WithPackedStorage &&
+      !needToPackSubByteElements(alignedElementType)) {
     staticCount *= IREE::Util::getRoundedElementByteWidth(alignedElementType);
   }
 
