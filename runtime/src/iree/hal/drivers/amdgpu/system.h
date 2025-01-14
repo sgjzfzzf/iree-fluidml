@@ -83,6 +83,8 @@ typedef struct iree_hal_amdgpu_host_memory_pools_t {
 
 // An initialized AMDGPU system topology and agent resources.
 // This is the authoritative list of available devices and their configuration.
+//
+// Thread-safe; systems are immutable once initialized.
 typedef struct iree_hal_amdgpu_system_t {
   // Allocator used for host operations.
   iree_allocator_t host_allocator;

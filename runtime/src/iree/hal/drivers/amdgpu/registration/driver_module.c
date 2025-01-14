@@ -37,6 +37,9 @@ static iree_status_t iree_hal_amdgpu_driver_factory_try_create(
   iree_hal_amdgpu_driver_options_t options;
   iree_hal_amdgpu_driver_options_initialize(&options);
 
+// DO NOT SUBMIT provide --amdgpu_libhsa_search_path= flag (string list)
+// options.libhsa_search_paths
+
 // DO NOT SUBMIT
 #if IREE_TRACING_FEATURES & IREE_TRACING_FEATURE_INSTRUMENTATION_DEVICE
   options.default_device_options.trace_execution = true;

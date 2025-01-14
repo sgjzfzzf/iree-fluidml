@@ -69,8 +69,9 @@ iree_status_t iree_hal_amdgpu_find_fine_global_memory_pool(
 //
 // This presents as a ringbuffer that does not need any special logic for
 // wrapping from base offsets used when copying in memory. It follows the
-// approach documented in https://lo.calho.st/posts/black-magic-buffer/ of
-// virtual memory mapping the buffer multiple times, example code:
+// approach documented in https://lo.calho.st/posts/black-magic-buffer/ and
+// https://www.mikeash.com/pyblog/friday-qa-2012-02-17-ring-buffers-and-mirrored-memory-part-ii.html
+// of virtual memory mapping the buffer multiple times, example code:
 // https://github.com/google/wuffs/blob/main/script/mmap-ring-buffer.c
 //
 // We use SVM to allocate the physical memory of the ringbuffer and then stitch
