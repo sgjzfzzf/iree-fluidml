@@ -28,10 +28,6 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 
-namespace mlir::iree_compiler {
-using IREE::Encoding::getEncodingAttr;
-}
-
 namespace mlir::iree_compiler::IREE::Stream {
 
 //===----------------------------------------------------------------------===//
@@ -1517,7 +1513,9 @@ LogicalResult TensorCloneOp::verify() {
   // information.
   auto sourceEncoding = llvm::cast<RankedTensorType>(op.getSourceEncoding());
   auto resultEncoding = llvm::cast<RankedTensorType>(op.getResultEncoding());
-  if (getEncodingAttr(sourceEncoding) != getEncodingAttr(resultEncoding)) {
+  if (sourceEncoding.getEncoding() != resultEncoding.getEncoding() &&
+      !IREE::Encoding::hasPackedStorageAttr(sourceEncoding) &&
+      !IREE::Encoding::hasPackedStorageAttr(resultEncoding)) {
     return op.emitOpError() << "clones changing tensor encoding from "
                             << sourceEncoding.getEncoding() << " to "
                             << resultEncoding.getEncoding() << "; not allowed";
