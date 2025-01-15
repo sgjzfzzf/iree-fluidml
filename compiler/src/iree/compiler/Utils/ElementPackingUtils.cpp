@@ -23,13 +23,11 @@ bool needToPackSubByteElements(Type type) {
                                 dyn_cast<TensorType>(type).getElementType())
                           : IREE::Util::getTypeBitWidth(type);
 
-  auto rankedTensorType = llvm::dyn_cast_or_null<RankedTensorType>(type);
-  bool isPackedStorage = rankedTensorType &&
-                         IREE::Encoding::hasPackedStorageAttr(rankedTensorType);
   // i1 with packed memory layout does not need to be extended.
-  if (bitWidth == 1 && isPackedStorage) {
+  if (bitWidth == 1 && IREE::Encoding::hasPackedStorageAttr(type)) {
     return true;
   }
+
   // Require the original bit width to be some power of two for now to avoid
   // trickiness and weirdness of packing and cross-byte access.
   // Also disallow boolean values for now--they may require separate interface

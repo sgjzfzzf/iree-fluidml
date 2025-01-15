@@ -249,7 +249,8 @@ struct ConvertToStreamPass final
       if (llvm::isa<IREE::Flow::ChannelType>(type)) {
         return IREE::Stream::ChannelType::get(context);
       }
-      if (auto rankedType = llvm::dyn_cast_or_null<RankedTensorType>(type)) {
+      if (auto rankedType = llvm::dyn_cast<RankedTensorType>(type)) {
+        // Drop packed_storage attr if any, as we don't need them anymore.
         if (IREE::Encoding::hasPackedStorageAttr(rankedType)) {
           return RankedTensorType::get(rankedType.getShape(),
                                        rankedType.getElementType());
