@@ -1111,7 +1111,7 @@ static void addLowerToLLVMGPUPasses(OpPassManager &modulePassManager,
       .addPass(createConvertBf16ToUInt16BuffersPass)
       .addPass([&]() {
         return createPolynomialApproximationPass(
-            {"tan,sinh,cosh,asinh,acosh,atanh"});
+            {/*noApproxOps =*/"tan,sinh,cosh,asinh,acosh,atanh"});
       })
       .addPass(memref::createExpandOpsPass)
       .addPass(memref::createFoldMemRefAliasOpsPass)
