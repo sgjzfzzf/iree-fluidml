@@ -24,8 +24,7 @@ util.func public @no_fuse_quantized(%arg0 : tensor<?x113x113x64xi8>, %arg1 : ten
 //     CHECK: util.func public @no_fuse_quantized
 //     CHECK:   flow.dispatch.workgroups
 //     CHECK:   linalg.depthwise_conv_2d_nhwc_hwc_q
-// CHECK-NOT:   linalg.generic
-//     CHECK:   flow.dispatch.workgroups
+// CHECK-NOT:   flow.dispatch.workgroups
 //     CHECK:   linalg.generic
 
 // -----
@@ -113,12 +112,10 @@ util.func @mixed_conv(%arg0 : tensor<2x130x130x16xf16>, %arg1 : tensor<3x3x16x32
   util.return %truncf : tensor<2x128x128x320xf16>
 }
 // CHECK-LABEL: func public @mixed_conv(
-//       CHECK:   flow.dispatch.workgroups
+//       CHECK:   %[[DISPATCH1:.+]] = flow.dispatch.workgroups
 //       CHECK:     %[[FILL:.+]] = linalg.fill
 //       CHECK:     %[[CONV:.+]] = linalg.conv_2d_nhwc_hwcf
 //  CHECK-SAME:         outs(%[[FILL]] :
-//       CHECK:     flow.dispatch.tensor.store
-//       CHECK:   %[[DISPATCH1:.+]] = flow.dispatch.workgroups
 //       CHECK:     %[[GENERIC:.+]] = linalg.generic
 //       CHECK:     flow.dispatch.tensor.store %[[GENERIC]]
 //       CHECK:   util.return %[[DISPATCH1]]

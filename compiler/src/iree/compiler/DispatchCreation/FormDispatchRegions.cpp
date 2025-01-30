@@ -417,11 +417,6 @@ static bool canUseInOperandAsInitOperand(OpOperand *inOperand,
     return false;
   }
 
-  // Types have to match for the input operand to reuse the buffer from the init
-  // operand
-  if (inOperand->get().getType() != initOperand->get().getType())
-    return false;
-
   return true;
 }
 
