@@ -5,8 +5,10 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "iree/compiler/Codegen/Common/Passes.h"
+#include "llvm/ADT/StringExtras.h"
 #include "mlir/Dialect/Math/Transforms/Approximation.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -29,14 +31,12 @@ namespace {
 class PolynomialApproximationPass final
     : public impl::PolynomialApproximationPassBase<
           PolynomialApproximationPass> {
-
 public:
-  using impl::PolynomialApproximationPassBase<
-      PolynomialApproximationPass>::PolynomialApproximationPassBase;
+  using Base::Base;
 
   void runOnOperation() override {
-    using PatternFunction = std::function<decltype(populateExpandTanPattern)>;
-    std::map<std::string, PatternFunction> patternMap = {
+    using PatternFunction = llvm::function_ref<void(RewritePatternSet &)>;
+    llvm::StringMap<PatternFunction> patternMap = {
         {"tan", populateExpandTanPattern},
         {"sinh", populateExpandSinhPattern},
         {"cosh", populateExpandCoshPattern},
@@ -53,30 +53,18 @@ public:
 
     RewritePatternSet mathPatterns(&getContext());
 
-    std::vector<StringRef> noOps = splitByComma(noApproxOps);
-    for (auto &pattern : patternMap) {
+    for (const auto &[fnName, populateFn] : patternMap) {
       // Skip any ops in the "do not convert" list.
-      auto it = std::find(noOps.begin(), noOps.end(), pattern.first);
-      if (it != noOps.end()) {
+      if (llvm::find(noApproxOps, fnName) != noApproxOps.end()) {
         continue;
       }
-      pattern.second(mathPatterns);
+      populateFn(mathPatterns);
     }
 
     if (failed(
             applyPatternsGreedily(getOperation(), std::move(mathPatterns)))) {
       return signalPassFailure();
     }
-  }
-
-  std::vector<StringRef> splitByComma(StringRef str) {
-    std::vector<StringRef> result;
-    SmallVector<StringRef, 8> parts;
-    str.split(parts, ",");
-    for (auto part : parts) {
-      result.push_back(part.str());
-    }
-    return result;
   }
 
   void populateErfPattern(RewritePatternSet &mathPatterns) {
