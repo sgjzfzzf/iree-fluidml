@@ -46,8 +46,8 @@ public:
         {"powf", populateExpandPowFPattern},
         {"fpowi", populateExpandFPowIPattern},
         {"erf",
-         [&](RewritePatternSet &mathPatterns) {
-           this->populateErfPattern(mathPatterns);
+         [&](RewritePatternSet &patterns) {
+           this->populateErfPattern(patterns);
          }},
     };
 
@@ -55,10 +55,9 @@ public:
 
     for (const auto &[fnName, populateFn] : patternMap) {
       // Skip any ops in the "do not convert" list.
-      if (llvm::find(noApproxOps, fnName) != noApproxOps.end()) {
-        continue;
+      if (!llvm::is_contained(noApproxOps, fnName)) {
+        populateFn(mathPatterns);
       }
-      populateFn(mathPatterns);
     }
 
     if (failed(
@@ -68,6 +67,7 @@ public:
   }
 
   void populateErfPattern(RewritePatternSet &mathPatterns) {
+    // TODO(lialan): retire the flag and clean up.
     if (clNativeMathPrecision) {
       mathPatterns.add<math::ErfPolynomialApproximation>(&getContext());
     } else {
