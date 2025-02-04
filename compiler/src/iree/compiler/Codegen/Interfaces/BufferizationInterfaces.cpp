@@ -78,6 +78,10 @@ getMemrefTypeForTensor(IREE::Flow::DispatchTensorType tensorType,
 // TODO(#12933): Because of regressions in CUDA backend, there is an
 // option to keep a legacy mode of not representing the offset in the
 // type. Remove once the bug is fixed.
+
+// FluidML(Jinjie Liu): This function controls the transformation from
+// flow.dispatch.tensor to memref. We should modify it if we want to add stride
+// information to the memref type.
 static Value
 findOrCreateSubspanBuffer(RewriterBase &rewriter,
                           IREE::HAL::InterfaceBindingSubspanOp subspanOp) {
@@ -88,9 +92,14 @@ findOrCreateSubspanBuffer(RewriterBase &rewriter,
 
   Value byteOffset = subspanOp.getByteOffset();
   MemRefLayoutAttrInterface layoutAttr = {};
-  if (byteOffset && !matchPattern(byteOffset, m_Zero())) {
+  // FluidML(Jinjie Liu): We should allocate the offset and stride information
+  // to the memref type even they're trivial. This helps to keep the information
+  // in it.
+  if (shapedType.getRank() > 0) {
+    // FluidML(Jinjie Liu): Don't add stride for unranked tensors like
+    // `tensor<f32>`.
     OpFoldResult elementOffset = convertByteOffsetToElementOffset(
-        rewriter, subspanOp->getLoc(), subspanOp.getByteOffset(),
+        rewriter, subspanOp->getLoc(), byteOffset,
         shapedType.getBoundElementType());
     std::optional<int64_t> elementOffsetInt =
         getConstantIntValue(elementOffset);
