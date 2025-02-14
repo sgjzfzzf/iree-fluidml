@@ -129,8 +129,8 @@ findOrCreateSubspanBuffer(RewriterBase &rewriter,
       if (auto axesAttr =
               funcOp->getAttrOfType<mlir::DenseI64ArrayAttr>(opAxisKey)) {
         ArrayRef<int64_t> axesOrderRef = axesAttr.asArrayRef();
-        DenseSet<int64_t> axesSet;
 #ifndef NDEBUG
+        DenseSet<int64_t> axesSet;
         const size_t rank = shapedType.getRank();
         assert(
             axesOrderRef.size() == rank &&
