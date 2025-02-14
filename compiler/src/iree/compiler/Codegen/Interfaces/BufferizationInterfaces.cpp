@@ -50,17 +50,38 @@ namespace mlir::iree_compiler {
 //===----------------------------------------------------------------------===//
 
 /// Get strides for row-major oredering of a tensor with the given `shape`.
-static SmallVector<int64_t> getStridesFromShape(ArrayRef<int64_t> shape) {
+static SmallVector<int64_t> getStridesFromShape(
+    ArrayRef<int64_t> shape,
+    std::optional<llvm::ArrayRef<int64_t>> axesOrderOpt = std::nullopt) {
   if (shape.empty()) {
     return {};
   }
-  SmallVector<int64_t> strides(shape.size(), ShapedType::kDynamic);
-  strides.back() = 1;
-  for (int i = strides.size() - 1; i > 0; --i) {
+  const size_t rank = shape.size();
+  SmallVector<int64_t> reorderedStrides(rank, ShapedType::kDynamic);
+  reorderedStrides.back() = 1;
+  SmallVector<int64_t> reorderedShape;
+  if (axesOrderOpt) {
+    reorderedShape.resize(rank);
+    for (int i = 0; i < rank; ++i) {
+      reorderedShape[(*axesOrderOpt)[i]] = shape[i];
+    }
+  } else {
+    reorderedShape.assign(shape.begin(), shape.end());
+  }
+  for (int i = rank - 1; i > 0; --i) {
     if (ShapedType::isDynamic(shape[i])) {
       break;
     }
-    strides[i - 1] = strides[i] * shape[i];
+    reorderedStrides[i - 1] = reorderedStrides[i] * reorderedShape[i];
+  }
+  SmallVector<int64_t> strides;
+  if (axesOrderOpt) {
+    strides.resize(rank);
+    for (int i = 0; i < rank; ++i) {
+      strides[i] = reorderedStrides[(*axesOrderOpt)[i]];
+    }
+  } else {
+    strides = std::move(reorderedStrides);
   }
   return strides;
 }
@@ -86,8 +107,8 @@ static Value
 findOrCreateSubspanBuffer(RewriterBase &rewriter,
                           IREE::HAL::InterfaceBindingSubspanOp subspanOp) {
   // Ensure that this a tensor subspan op.
-  auto shapedType = llvm::dyn_cast<IREE::Flow::DispatchTensorType>(
-      subspanOp.getResult().getType());
+  auto shapedType =
+      dyn_cast<IREE::Flow::DispatchTensorType>(subspanOp.getResult().getType());
   assert(shapedType && shapedType.hasRank());
 
   Value byteOffset = subspanOp.getByteOffset();
@@ -98,6 +119,34 @@ findOrCreateSubspanBuffer(RewriterBase &rewriter,
   if (shapedType.getRank() > 0) {
     // FluidML(Jinjie Liu): Don't add stride for unranked tensors like
     // `tensor<f32>`.
+    std::optional<ArrayRef<int64_t>> axesOrderOpt = std::nullopt;
+    if (auto funcOp = subspanOp->getParentOfType<func::FuncOp>()) {
+      // FluidML(Jinjie Liu): The attribute describing the axis is stored in the
+      // format of `fluidml.arg${axis}axis`.
+      SmallString<16> opAxisKey("fluidml.arg");
+      subspanOp.getBinding().toStringUnsigned(opAxisKey, 10);
+      opAxisKey.append("axes");
+      if (auto axesAttr =
+              funcOp->getAttrOfType<mlir::DenseI64ArrayAttr>(opAxisKey)) {
+        ArrayRef<int64_t> axesOrderRef = axesAttr.asArrayRef();
+        DenseSet<int64_t> axesSet;
+#ifndef NDEBUG
+        const size_t rank = shapedType.getRank();
+        assert(
+            axesOrderRef.size() == rank &&
+            "The axes in the attribute should have the same size as the rank.");
+        for (int64_t axis : axesOrderRef) {
+          assert(
+              axis >= 0 && axis < rank &&
+              "The axis in the attribute should be in the range of [0, rank)");
+          axesSet.insert(axis);
+        }
+        assert(axesSet.size() == rank &&
+               "The axes in the attribute should be unique.");
+#endif
+        axesOrderOpt = axesOrderRef;
+      }
+    }
     OpFoldResult elementOffset = convertByteOffsetToElementOffset(
         rewriter, subspanOp->getLoc(), byteOffset,
         shapedType.getBoundElementType());
@@ -107,7 +156,8 @@ findOrCreateSubspanBuffer(RewriterBase &rewriter,
       elementOffsetInt = ShapedType::kDynamic;
     }
     auto tensorType = llvm::cast<RankedTensorType>(shapedType.getBoundType());
-    SmallVector<int64_t> strides = getStridesFromShape(tensorType.getShape());
+    SmallVector<int64_t> strides =
+        getStridesFromShape(tensorType.getShape(), axesOrderOpt);
     layoutAttr = StridedLayoutAttr::get(rewriter.getContext(),
                                         elementOffsetInt.value(), strides);
   }
